@@ -1,18 +1,39 @@
 #include <Bounce2.h>
 
-// Pin declarations
-#define PIN_OUTPUT 2
-#define PIN_TRIGGER 0
-#define PIN_SPEED_A 1
-#define PIN_SPEED_B 3
+// ---------------------------------
+// CONFIGURATION HERE
+// ---------------------------------
 
-// Solenoid pulse generation times
-#define PULSE_ON_TIME 35
-#define PULSE_RETRACT_TIME 80
+// This is the solenoid pulse time. Make this bigger to give it more power - 
+// but don't allow it to get so high that it sticks on
+#define PULSE_ON_TIME 65
+
+// This is the solenoid retract time. Make this bigger to give the solenoid more
+// time to reset. A bigger spring will make this faster
+#define PULSE_RETRACT_TIME 105
+
+// This is your desired DPS. Make it 99 to go as fast as possible, otherwise any number
+// higher than 1 is OK
+#define TargetDPS 99
+
+// This is the burst fire size. Change this to any number more than one to increase the number of
+// burst shots... DOn't be silly though.
+#define BURST_SIZE 3
+
+
+// ---------------------------------
+// STOP TOUCHING HERE
+// ---------------------------------
+
+
+// Pin declarations
+#define PIN_MOSFET 5
+#define PIN_TRIGGER 4
+#define PIN_MODE_A 2
+#define PIN_MODE_B 3
 
 // Other stuff
-#define BURST_SIZE 3              // How many shots per burst
-#define TIME_BETWEEN_SHOTS 50    // How long to wait from one shot to the next
+int TimeBetweenShots = 0;    // How long to wait from one shot to the next
 #define MODE_SINGLE 0
 #define MODE_BURST 1
 #define MODE_AUTO 2
@@ -21,8 +42,7 @@
 
 // Current Mode
 int CurrentMode = MODE_IDLE;
-
-// 
+int RunningMode = MODE_SINGLE;
 
 // Software debouncing
 Bounce BtnTrigger = Bounce();
@@ -30,18 +50,37 @@ Bounce BtnTrigger = Bounce();
 void setup() {
   // put your setup code here, to run once:
 
-  pinMode( PIN_OUTPUT, OUTPUT );
-  digitalWrite( PIN_OUTPUT, LOW );
+  pinMode( PIN_MOSFET, OUTPUT );
+  digitalWrite( PIN_MOSFET, LOW );
 
-  //digitalWrite( PIN_TRIGGER, HIGH );
   pinMode( PIN_TRIGGER, INPUT_PULLUP );
-  //pinMode( PIN_SPEED_A, INPUT_PULLUP );
-  //pinMode( PIN_SPEED_B, INPUT_PULLUP );
+  pinMode( PIN_MODE_A, INPUT_PULLUP );
+  pinMode( PIN_MODE_B, INPUT_PULLUP );
 
   BtnTrigger.attach(PIN_TRIGGER);
   BtnTrigger.interval(5); // interval in ms
 
-  //Serial.begin( 57600 );
+  if( TargetDPS == 99 ) // Full rate
+  {
+    TimeBetweenShots = 0;
+  }
+  else
+  {
+    int PulseOverhead = PULSE_ON_TIME + PULSE_RETRACT_TIME;
+    int TotalPulseOverhead = PulseOverhead * TargetDPS;
+    int FreeMS = 1000 - TotalPulseOverhead;
+    if( FreeMS <= 0 )
+    {
+      TimeBetweenShots = 0; // Pusher won't achieve this rate
+    }
+    else
+    {
+      TimeBetweenShots = FreeMS / TargetDPS;
+    }
+  }
+  
+
+  Serial.begin( 57600 );
 }
 
 void loop() {
@@ -60,7 +99,7 @@ void loop() {
 
   if( ButtonChange )
   {
-    if( (millis() - LastShot) < TIME_BETWEEN_SHOTS )
+    if( (millis() - LastShot) < TimeBetweenShots )
     {
       //Serial.println( "Too soon to fire again...");
       CurrentMode = MODE_IDLE;
@@ -119,7 +158,7 @@ void loop() {
         //Serial.println( "Start Pulse" );
       }
       CurrentCyclePosition = Cycle_Pulse;
-      digitalWrite( PIN_OUTPUT, HIGH );
+      digitalWrite( PIN_MOSFET, HIGH );
 
       return;
     }
@@ -131,19 +170,19 @@ void loop() {
         //Serial.println( "End Pulse" );
       }
       CurrentCyclePosition = Cycle_Retract;
-      digitalWrite( PIN_OUTPUT, LOW );
+      digitalWrite( PIN_MOSFET, LOW );
 
       return;      
     }
 
-    if( (millis() - LastCycleStarted) < (PULSE_ON_TIME + PULSE_RETRACT_TIME + TIME_BETWEEN_SHOTS) )
+    if( (millis() - LastCycleStarted) < (PULSE_ON_TIME + PULSE_RETRACT_TIME + TimeBetweenShots) )
     {
       if( CurrentCyclePosition != Cycle_Cooldown )
       {
         //Serial.println( "Cooling Down" );
       }
       CurrentCyclePosition = Cycle_Cooldown;
-      digitalWrite( PIN_OUTPUT, LOW );
+      digitalWrite( PIN_MOSFET, LOW );
 
       return;      
     }
@@ -162,24 +201,39 @@ void loop() {
 
 bool ProcessButtons()
 {
+
+  if( digitalRead( PIN_MODE_A ) == LOW )
+  {
+    RunningMode = MODE_SINGLE;
+  }
+  else if( digitalRead( PIN_MODE_B ) == LOW )
+  {
+    RunningMode = MODE_AUTO;
+  }
+  else
+  {
+    RunningMode = MODE_BURST;
+  }
+
+
   BtnTrigger.update();
 
   if( CurrentMode == MODE_IDLE )
   {
     if( BtnTrigger.fell() )
     {
-      CurrentMode = MODE_AUTO;  // You can change between modes here is desired 
-      //Serial.println( "Fire Please" );
+      CurrentMode = RunningMode;  // You can change between modes here is desired 
+      Serial.println( "Fire Please" );
       return true;
     }
   }
-
+  
   if( CurrentMode == MODE_AUTO )
   {
     if( BtnTrigger.rose() )
     {
       CurrentMode = MODE_AUTO_LASTSHOT;
-      //Serial.println( "AUTO - Last Shot" );
+      Serial.println( "AUTO - Last Shot" );
       return true;
     }
   }
